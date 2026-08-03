@@ -89,12 +89,12 @@ class App:
                 self.msg_q.put(("status", "Checking..."))
                 live_posts = live_comments = removed = deleted = not_found = blocked = 0
                 for i, url in enumerate(urls, 1):
-                    status, reason = check(url, sess, snapshots)
+                    status, reason, target = check(url, sess, snapshots)
                     if status == "BLOCKED":
                         sess._warm()
-                        status, reason = check(url, sess, snapshots)
+                        status, reason, target = check(url, sess, snapshots)
                     if status == "LIVE":
-                        if COMMENT_RE.search(url):
+                        if COMMENT_RE.search(target):
                             live_comments += 1
                         else:
                             live_posts += 1
@@ -106,7 +106,8 @@ class App:
                         not_found += 1
                     else:
                         blocked += 1
-                    self.msg_q.put(("log", f"[{i}/{len(urls)}] {status:<9} {reason}  {url}"))
+                    show = url if (not target or target == url) else f"{url}  ->  {target}"
+                    self.msg_q.put(("log", f"[{i}/{len(urls)}] {status:<9} {reason}  {show}"))
             finally:
                 sess.close()
             save_snapshots(snapshots)
@@ -115,7 +116,8 @@ class App:
                 f"removed: {removed} | deleted: {deleted} | not found: {not_found} | blocked: {blocked}"
             )
             self.msg_q.put(("log", summary))
-            self.msg_q.put(("status", f"Done. {len(urls)} link(s), {blocked} blocked."))
+            self.msg_q.put(("log", f"Result: {live_posts + live_comments} of {len(urls)} links are live."))
+            self.msg_q.put(("status", f"Done. {len(urls)} link(s), {live_posts + live_comments} live, {blocked} blocked."))
         except Exception as e:
             self.msg_q.put(("log", f"ERROR: {e}"))
             self.msg_q.put(("status", "Failed."))

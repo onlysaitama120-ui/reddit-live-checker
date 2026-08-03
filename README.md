@@ -44,6 +44,16 @@ python checker.py --file links.txt
 python checker.py --file links.txt --csv results.csv
 ```
 
+From your phone (same Wi-Fi as the PC):
+
+```bash
+python webapp.py
+```
+
+Then open the printed `http://<pc-ip>:8000` address in your phone's browser.
+Paste links there and check them. The checking still runs on the PC; the
+phone is just the screen.
+
 ## Output example
 
 ```

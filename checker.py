@@ -12,6 +12,7 @@ SNAPSHOT_FILE = "snapshots.json"
 
 POST_RE = re.compile(r"/comments/([a-z0-9]+)")
 COMMENT_RE = re.compile(r"/comments/([a-z0-9]+)/(?:[a-z0-9_-]+/)?([a-z0-9]{7})/?")
+SHARE_RE = re.compile(r"reddit\.com/r/[\w-]+/s/[\w-]+", re.IGNORECASE)
 
 
 class RedditSession:
@@ -34,6 +35,13 @@ class RedditSession:
         if resp is None:
             return None, 0
         return resp.body(), resp.status
+
+    def resolve(self, url):
+        try:
+            self.page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            return self.page.url, 200
+        except Exception:
+            return None, 0
 
     def close(self):
         try:
@@ -98,40 +106,51 @@ def walk(nodes, comment_id):
     return None
 
 
-def check(url, sess, snapshots):
+def check(url, sess, snapshots, _depth=0):
+    if SHARE_RE.search(url):
+        if _depth >= 3:
+            return "UNKNOWN", "share link did not resolve to a normal url", url
+        final_url, code = sess.resolve(url)
+        if not final_url or not final_url.startswith("http"):
+            return "BLOCKED", "could not resolve share link", url
+        return check(final_url, sess, snapshots, _depth + 1)
     m = COMMENT_RE.search(url)
     if m:
         post_id, comment_id = m.group(1), m.group(2)
-        body, code = sess.fetch(f"https://www.reddit.com/comments/{post_id}.json")
+        body, code = sess.fetch(f"https://www.reddit.com/comments/{post_id}/comment/{comment_id}.json")
         if code != 200:
-            return "BLOCKED" if code in (403, 0) else ("NOT_FOUND" if code == 404 else "UNKNOWN"), f"http {code}"
+            return ("BLOCKED" if code in (403, 0) else ("NOT_FOUND" if code == 404 else "UNKNOWN"), f"http {code}", url)
         try:
             data = json.loads(body)
         except Exception:
-            return "BLOCKED", "challenge page instead of json"
+            return "BLOCKED", "challenge page instead of json", url
         if not isinstance(data, list) or len(data) < 2:
-            return "UNKNOWN", "unexpected response shape"
+            return "UNKNOWN", "unexpected response shape", url
         children = data[1].get("data", {}).get("children", [])
         c = walk(children, comment_id)
         if c is None:
-            return "NOT_FOUND", "comment not found (removed/deleted or wrong link)"
-        return classify_comment(c, snapshots)
+            if not children:
+                return "NOT_FOUND", "comment was removed or deleted (no longer publicly visible)", url
+            return "NOT_FOUND", "comment not found (wrong link or comment never existed)", url
+        status, reason = classify_comment(c, snapshots)
+        return status, reason, url
     m = POST_RE.search(url)
     if m:
         post_id = m.group(1)
         body, code = sess.fetch(f"https://www.reddit.com/comments/{post_id}.json")
         if code != 200:
-            return "BLOCKED" if code in (403, 0) else ("NOT_FOUND" if code == 404 else "UNKNOWN"), f"http {code}"
+            return ("BLOCKED" if code in (403, 0) else ("NOT_FOUND" if code == 404 else "UNKNOWN"), f"http {code}", url)
         try:
             data = json.loads(body)
         except Exception:
-            return "BLOCKED", "challenge page instead of json"
+            return "BLOCKED", "challenge page instead of json", url
         try:
             post = data[0]["data"]["children"][0]["data"]
         except Exception:
-            return "UNKNOWN", "unexpected response shape"
-        return classify_post(post)
-    return "INVALID", "not a reddit post/comment url"
+            return "UNKNOWN", "unexpected response shape", url
+        status, reason = classify_post(post)
+        return status, reason, url
+    return "INVALID", "not a reddit post/comment url", url
 
 
 def load_snapshots():
@@ -175,12 +194,12 @@ def main():
     try:
         live_posts = live_comments = removed = deleted = not_found = blocked = 0
         for url in urls:
-            status, reason = check(url, sess, snapshots)
+            status, reason, target = check(url, sess, snapshots)
             if status == "BLOCKED":
                 sess._warm()
-                status, reason = check(url, sess, snapshots)
+                status, reason, target = check(url, sess, snapshots)
             if status == "LIVE":
-                if COMMENT_RE.search(url):
+                if COMMENT_RE.search(target):
                     live_comments += 1
                 else:
                     live_posts += 1
@@ -192,9 +211,12 @@ def main():
                 not_found += 1
             else:
                 blocked += 1
-            print(f"{status:<9} {reason}  {url}", flush=True)
+            if target and target != url:
+                print(f"{status:<9} {reason}  {url}\n           (points to: {target})", flush=True)
+            else:
+                print(f"{status:<9} {reason}  {url}", flush=True)
             if out:
-                out.writerow([url, status, reason])
+                out.writerow([url, target, status, reason])
                 outf.flush()
     finally:
         sess.close()
@@ -203,6 +225,7 @@ def main():
         outf.close()
     save_snapshots(snapshots)
     print(f"\nLIVE posts: {live_posts} | LIVE comments: {live_comments} | removed: {removed} | deleted: {deleted} | not found: {not_found} | blocked: {blocked}", flush=True)
+    print(f"Result: {live_posts + live_comments} of {len(urls)} links are live.", flush=True)
     return 0
 
 
