@@ -21,7 +21,13 @@ from checker import (
 )
 
 # ===== CONFIGURATION =====
-DISCORD_TOKEN = "MTUzNDIzMzk2MTAzODA5MDMyMQ.Gfa1mx.YSfqN1d9j4O23nB4eraaesFQVYMJbD0IgdJMCQ"
+# IMPORTANT: Set your bot token as an environment variable DISCORD_TOKEN
+# (e.g. in PowerShell: $env:DISCORD_TOKEN="your-token-here")
+import os
+DISCORD_TOKEN = os.environ.get("DISCORD_TOKEN", "")
+if not DISCORD_TOKEN:
+    raise SystemExit("ERROR: DISCORD_TOKEN environment variable not set. "
+                     "Set it before running: e.g. $env:DISCORD_TOKEN='your-token'")
 # =========================
 
 intents = discord.Intents.default()
@@ -159,7 +165,7 @@ async def checkmulti_cmd(interaction: discord.Interaction, urls: str):
 
         embed = discord.Embed(
             title=f"Check Results ({len(url_list)} URLs)",
-            description="/n".join(results),
+            description="\n".join(results),
             color=discord.Color.blue(),
         )
         embed.set_footer(text=summary)
